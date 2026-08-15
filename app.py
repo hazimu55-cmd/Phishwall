@@ -330,6 +330,7 @@ def normalize_url(raw: str) -> str:
 
 def rule_score(f: dict) -> float:
     score = 0.0
+    # Original features
     if f['phishing_keywords'] >= 1:  score += 0.15
     if f['phishing_keywords'] >= 2:  score += 0.15
     if f['phishing_keywords'] >= 4:  score += 0.20
@@ -341,6 +342,14 @@ def rule_score(f: dict) -> float:
     if f['num_subdomains'] > 2:      score += 0.20
     if f['url_length'] > 100:        score += 0.10
     if f['num_hyphens'] > 3:         score += 0.10
+    
+    # New critical features (5 most impactful)
+    if f['full_url_entropy'] > 4.5:       score += 0.15  # High randomness
+    if f['full_nan_entropy'] > 2.0:       score += 0.20  # High special char randomness (critical)
+    if f['domain_entropy'] > 4.0:         score += 0.10  # Random domain
+    if f['digit_ratio'] > 0.15:           score += 0.10  # High digit concentration
+    if f['special_char_ratio'] > 0.25:    score += 0.15  # High special char concentration
+    
     return min(score, 1.0)
 
 
@@ -482,20 +491,26 @@ with tab_single:
 
         with st.expander("What the detector looked at"):
             labels = {
+                # Original features
                 'url_length': 'URL length', 'domain_length': 'Domain length', 'path_length': 'Path length',
                 'num_dots': 'Number of dots', 'num_hyphens': 'Number of hyphens', 'num_at': 'Has @ symbol',
                 'num_digits': 'Digit count', 'num_subdomains': 'Subdomain depth', 'num_params': 'Query parameters',
                 'num_obfuscated': 'Obfuscated chars (%xx)', 'is_https': 'Uses HTTPS',
                 'has_ip_address': 'Uses raw IP address', 'http_in_domain': '"http" inside hostname',
                 'phishing_keywords': 'Phishing keywords found',
+                # New critical features
+                'full_url_entropy': 'Full URL entropy', 'full_nan_entropy': 'Non-alphanumeric entropy',
+                'domain_entropy': 'Domain entropy', 'digit_ratio': 'Digit ratio', 'special_char_ratio': 'Special char ratio',
             }
             suspicious = {
                 'num_at': lambda v: v > 0, 'has_ip_address': lambda v: v == 1,
                 'http_in_domain': lambda v: v == 1, 'phishing_keywords': lambda v: v >= 2,
                 'url_length': lambda v: v > 100, 'num_subdomains': lambda v: v > 2,
                 'is_https': lambda v: v == 0, 'num_hyphens': lambda v: v > 3,
+                'full_url_entropy': lambda v: v > 4.5, 'full_nan_entropy': lambda v: v > 2.0,
+                'domain_entropy': lambda v: v > 4.0, 'digit_ratio': lambda v: v > 0.15, 'special_char_ratio': lambda v: v > 0.25,
             }
-            rows = [{"Feature": label, "Value": features[k],
+            rows = [{"Feature": label, "Value": f"{features[k]:.4f}" if isinstance(features[k], float) else features[k],
                      "": "⚠️" if k in suspicious and suspicious[k](features[k]) else ""}
                     for k, label in labels.items()]
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)

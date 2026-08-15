@@ -6,7 +6,7 @@ import joblib
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 from feature_extraction import extract_features, FEATURE_COLUMNS
 
@@ -29,22 +29,29 @@ def main():
         sys.exit(1)
 
     urls = df['URL'].tolist()
-    n_workers = os.cpu_count() or 4
+    n_workers = min(4, os.cpu_count() or 2)  # Limit workers to avoid memory issues
 
-    # --- Feature extraction, parallelized across CPU cores --------------
-    # extract_features() is pure Python string/regex work with no shared
-    # state, so it's a perfect fit for process-based parallelism. Threads
-    # would NOT help here (GIL), which is why the original single list
-    # comprehension only ever used one core for ~235k rows. Processes
-    # sidestep the GIL and use every core.
-    print(f"Extracting features from {len(urls):,} URLs using {n_workers} processes...")
+    # --- Feature extraction, using thread pool for memory efficiency ------
+    # Using ThreadPoolExecutor instead of ProcessPoolExecutor to avoid
+    # memory issues on Windows. While GIL limits true parallelism for
+    # CPU-bound tasks, this is more stable and memory-efficient.
+    print(f"Extracting features from {len(urls):,} URLs using {n_workers} workers...")
     t0 = time.time()
 
-    # chunksize batches work per worker to cut down on IPC overhead for
-    # a function this cheap and this numerous.
-    chunksize = max(1, len(urls) // (n_workers * 20))
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        features_list = list(executor.map(extract_features, urls, chunksize=chunksize))
+    # Process in smaller batches to manage memory
+    batch_size = 10000
+    features_list = []
+    
+    for i in range(0, len(urls), batch_size):
+        batch_urls = urls[i:i + batch_size]
+        print(f"  Processing batch {i//batch_size + 1}/{(len(urls) + batch_size - 1)//batch_size} ({len(batch_urls)} URLs)...")
+        
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            batch_features = list(executor.map(extract_features, batch_urls))
+            features_list.extend(batch_features)
+        
+        # Clear some memory
+        del batch_urls, batch_features
 
     print(f"Feature extraction done in {time.time() - t0:.1f}s")
 
@@ -53,6 +60,10 @@ def main():
     X = pd.DataFrame(features_list, columns=FEATURE_COLUMNS)
     y = df['label'].astype(int)
 
+    print(f"\nFeature matrix shape: {X.shape}")
+    print(f"Total features: {len(FEATURE_COLUMNS)} (15 original + 5 critical advanced)")
+    print(f"New advanced features: full_url_entropy, full_nan_entropy, domain_entropy, digit_ratio, special_char_ratio")
+    
     print(f"\nPhishing URLs  : {(y == 1).sum():,}")
     print(f"Legitimate URLs: {(y == 0).sum():,}")
 
@@ -85,8 +96,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # Required guard for ProcessPoolExecutor: without it, each spawned
-    # worker process would re-import and re-run this module from the top,
-    # causing infinite recursive process spawning on Windows/macOS (spawn
-    # start method) and duplicated work everywhere else.
+    # Main execution guard - good practice for all Python scripts
     main()

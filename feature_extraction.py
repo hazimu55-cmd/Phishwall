@@ -1,4 +1,6 @@
 import re
+import math
+from collections import Counter
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
@@ -110,6 +112,220 @@ DOMAIN_LABEL_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', re.IGNOREC
 TLD_RE = re.compile(r'^[a-zA-Z]{2,24}$')
 
 
+# ---------------------------------------------------------------------------
+# ADVANCED FEATURE EXTRACTION FUNCTIONS
+# ---------------------------------------------------------------------------
+
+def calculate_shannon_entropy(text: str) -> float:
+    """Calculate Shannon entropy of a string (randomness measure)."""
+    if not text:
+        return 0.0
+    
+    char_counts = Counter(text)
+    total_chars = len(text)
+    
+    # Calculate probabilities and entropy
+    probabilities = [count / total_chars for count in char_counts.values()]
+    entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
+    
+    return entropy
+
+
+def calculate_non_alphanumeric_entropy(text: str) -> float:
+    """Calculate entropy of non-alphanumeric characters (critical for phishing detection)."""
+    if not text:
+        return 0.0
+    
+    # Extract only non-alphanumeric characters
+    non_alnum_chars = [c for c in text if not c.isalnum()]
+    
+    if not non_alnum_chars:
+        return 0.0
+    
+    char_counts = Counter(non_alnum_chars)
+    total_chars = len(non_alnum_chars)
+    
+    probabilities = [count / total_chars for count in char_counts.values()]
+    entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
+    
+    return entropy
+
+
+def extract_char_ngrams(text: str, n: int) -> dict:
+    """Extract character n-grams as frequency dictionary."""
+    if len(text) < n:
+        return {}
+    
+    ngrams = {}
+    for i in range(len(text) - n + 1):
+        ngram = text[i:i+n]
+        ngrams[ngram] = ngrams.get(ngram, 0) + 1
+    
+    return ngrams
+
+
+def get_character_category_ratios(text: str) -> dict:
+    """Calculate ratios of different character categories."""
+    if not text:
+        return {'digit_ratio': 0, 'special_char_ratio': 0, 'letter_ratio': 0, 'upper_ratio': 0, 'lower_ratio': 0}
+    
+    total_chars = len(text)
+    
+    digits = sum(1 for c in text if c.isdigit())
+    letters = sum(1 for c in text if c.isalpha())
+    special = total_chars - digits - letters
+    upper = sum(1 for c in text if c.isupper())
+    lower = sum(1 for c in text if c.islower())
+    
+    return {
+        'digit_ratio': digits / total_chars if total_chars > 0 else 0,
+        'special_char_ratio': special / total_chars if total_chars > 0 else 0,
+        'letter_ratio': letters / total_chars if total_chars > 0 else 0,
+        'upper_ratio': upper / total_chars if total_chars > 0 else 0,
+        'lower_ratio': lower / total_chars if total_chars > 0 else 0,
+    }
+
+
+def get_vowel_consonant_ratio(text: str) -> dict:
+    """Calculate vowel to consonant ratio (for alphabetic characters)."""
+    if not text:
+        return {'vowel_ratio': 0, 'consonant_ratio': 0, 'vowel_consonant_ratio': 0}
+    
+    vowels = set('aeiouAEIOU')
+    alphabetic_chars = [c for c in text if c.isalpha()]
+    
+    if not alphabetic_chars:
+        return {'vowel_ratio': 0, 'consonant_ratio': 0, 'vowel_consonant_ratio': 0}
+    
+    vowel_count = sum(1 for c in alphabetic_chars if c in vowels)
+    consonant_count = len(alphabetic_chars) - vowel_count
+    
+    return {
+        'vowel_ratio': vowel_count / len(alphabetic_chars),
+        'consonant_ratio': consonant_count / len(alphabetic_chars),
+        'vowel_consonant_ratio': vowel_count / consonant_count if consonant_count > 0 else 0,
+    }
+
+
+def extract_url_token_tfidf_features(url: str) -> dict:
+    """
+    Extract simplified TF-IDF-like features for URL tokens.
+    For a single URL, this returns term frequencies weighted by inverse
+    document frequency assumptions based on common URL patterns.
+    """
+    # Tokenize URL by common delimiters
+    tokens = re.split(r'[./\-_=?&]', url.lower())
+    tokens = [t for t in tokens if t]  # Remove empty tokens
+    
+    if not tokens:
+        return {'avg_token_tfidf': 0, 'max_token_tfidf': 0, 'unique_token_ratio': 0}
+    
+    # Calculate term frequencies
+    token_counts = Counter(tokens)
+    total_tokens = len(tokens)
+    
+    # Simplified IDF assumptions based on URL patterns
+    # Common tokens in URLs have lower IDF, rare tokens have higher IDF
+    common_url_tokens = {
+        'http', 'https', 'www', 'com', 'org', 'net', 'html', 'php',
+        'index', 'home', 'page', 'site', 'web', 'online', 'official'
+    }
+    
+    tfidf_scores = []
+    for token, count in token_counts.items():
+        tf = count / total_tokens
+        
+        # Simplified IDF: lower for common tokens, higher for rare ones
+        if token in common_url_tokens:
+            idf = 1.0  # Low IDF for common tokens
+        elif len(token) <= 2:
+            idf = 1.5  # Medium IDF for short tokens
+        else:
+            idf = 2.0  # High IDF for longer, more specific tokens
+        
+        tfidf_scores.append(tf * idf)
+    
+    return {
+        'avg_token_tfidf': sum(tfidf_scores) / len(tfidf_scores) if tfidf_scores else 0,
+        'max_token_tfidf': max(tfidf_scores) if tfidf_scores else 0,
+        'unique_token_ratio': len(token_counts) / total_tokens if total_tokens > 0 else 0,
+    }
+
+
+def extract_advanced_entropy_features(url: str) -> dict:
+    """Extract all entropy-based features."""
+    parsed = urlparse(url.lower())
+    
+    # Calculate entropy for different parts of URL
+    full_entropy = calculate_shannon_entropy(url)
+    domain_entropy = calculate_shannon_entropy(parsed.netloc)
+    path_entropy = calculate_shannon_entropy(parsed.path)
+    query_entropy = calculate_shannon_entropy(parsed.query)
+    
+    # Non-alphanumeric entropy (critical for phishing detection)
+    full_nan_entropy = calculate_non_alphanumeric_entropy(url)
+    domain_nan_entropy = calculate_non_alphanumeric_entropy(parsed.netloc)
+    
+    # Domain label entropy (for detecting random-looking domains)
+    domain_labels = parsed.netloc.split('.')
+    if domain_labels:
+        max_label_entropy = max(calculate_shannon_entropy(label) for label in domain_labels)
+        avg_label_entropy = sum(calculate_shannon_entropy(label) for label in domain_labels) / len(domain_labels)
+    else:
+        max_label_entropy = 0
+        avg_label_entropy = 0
+    
+    return {
+        'full_url_entropy': full_entropy,
+        'domain_entropy': domain_entropy,
+        'path_entropy': path_entropy,
+        'query_entropy': query_entropy,
+        'full_nan_entropy': full_nan_entropy,
+        'domain_nan_entropy': domain_nan_entropy,
+        'max_domain_label_entropy': max_label_entropy,
+        'avg_domain_label_entropy': avg_label_entropy,
+    }
+
+
+def extract_ngram_features(url: str) -> dict:
+    """Extract character n-gram features (2-4 grams)."""
+    # Extract n-grams for different n values
+    bigrams = extract_char_ngrams(url.lower(), 2)
+    trigrams = extract_char_ngrams(url.lower(), 3)
+    quadgrams = extract_char_ngrams(url.lower(), 4)
+    
+    # Calculate statistical properties of n-grams
+    def ngram_stats(ngrams_dict):
+        if not ngrams_dict:
+            return {'count': 0, 'unique_ratio': 0, 'max_freq': 0}
+        
+        counts = list(ngrams_dict.values())
+        total = sum(counts)
+        unique = len(ngrams_dict)
+        
+        return {
+            'count': total,
+            'unique_ratio': unique / total if total > 0 else 0,
+            'max_freq': max(counts) if counts else 0,
+        }
+    
+    bigram_stats = ngram_stats(bigrams)
+    trigram_stats = ngram_stats(trigrams)
+    quadgram_stats = ngram_stats(quadgrams)
+    
+    return {
+        'bigram_count': bigram_stats['count'],
+        'bigram_unique_ratio': bigram_stats['unique_ratio'],
+        'bigram_max_freq': bigram_stats['max_freq'],
+        'trigram_count': trigram_stats['count'],
+        'trigram_unique_ratio': trigram_stats['unique_ratio'],
+        'trigram_max_freq': trigram_stats['max_freq'],
+        'quadgram_count': quadgram_stats['count'],
+        'quadgram_unique_ratio': quadgram_stats['unique_ratio'],
+        'quadgram_max_freq': quadgram_stats['max_freq'],
+    }
+
+
 def is_valid_url(url: str) -> tuple[bool, str]:
     """
     Reject inputs that aren't actually shaped like a URL before they ever
@@ -156,11 +372,19 @@ def is_valid_url(url: str) -> tuple[bool, str]:
 
 # Keep this list in sync with train_model.py's feature columns.
 FEATURE_COLUMNS = [
+    # Original features
     'url_length', 'domain_length', 'path_length',
     'num_dots', 'num_hyphens', 'num_at', 'num_digits',
     'num_subdomains', 'num_params', 'num_obfuscated',
     'is_https', 'has_ip_address', 'http_in_domain',
     'phishing_keywords', 'high_risk_tld',
+    
+    # New critical features (5 most impactful)
+    'full_url_entropy',      # Strong randomness indicator
+    'full_nan_entropy',      # Critical for obfuscation detection
+    'domain_entropy',        # Random domain detection
+    'digit_ratio',           # Character distribution analysis
+    'special_char_ratio',    # Suspicious char concentration
 ]
 
 
@@ -202,7 +426,8 @@ def extract_features(url: str) -> dict:
     # "google-verify-security", not "google").
     brand_hits = sum(1 for kw in BRAND_KEYWORDS if kw in full and kw != root_label)
 
-    return {
+    # Extract original features
+    features = {
         'url_length':       len(full),
         'domain_length':    len(domain),
         'path_length':      len(path),
@@ -222,6 +447,18 @@ def extract_features(url: str) -> dict:
         'phishing_keywords': action_hits + brand_hits,
         'high_risk_tld':     1 if is_high_risk_tld(domain) else 0,
     }
+
+    # Add only the 5 critical new features
+    features['full_url_entropy'] = calculate_shannon_entropy(full)
+    features['full_nan_entropy'] = calculate_non_alphanumeric_entropy(full)
+    features['domain_entropy'] = calculate_shannon_entropy(domain)
+    
+    # Character category ratios (only digit and special char ratios)
+    char_ratios = get_character_category_ratios(full)
+    features['digit_ratio'] = char_ratios['digit_ratio']
+    features['special_char_ratio'] = char_ratios['special_char_ratio']
+
+    return features
 
 
 def extract_features_batch(urls: list[str], max_workers: int = 8) -> pd.DataFrame:
