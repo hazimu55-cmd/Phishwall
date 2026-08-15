@@ -6,7 +6,6 @@ import joblib
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 from feature_extraction import extract_features, FEATURE_COLUMNS
 
@@ -29,29 +28,13 @@ def main():
         sys.exit(1)
 
     urls = df['URL'].tolist()
-    n_workers = min(4, os.cpu_count() or 2)  # Limit workers to avoid memory issues
 
-    # --- Feature extraction, using thread pool for memory efficiency ------
-    # Using ThreadPoolExecutor instead of ProcessPoolExecutor to avoid
-    # memory issues on Windows. While GIL limits true parallelism for
-    # CPU-bound tasks, this is more stable and memory-efficient.
-    print(f"Extracting features from {len(urls):,} URLs using {n_workers} workers...")
+    # --- Feature extraction ------------------------------------------------
+    print(f"Extracting features from {len(urls):,} URLs...")
     t0 = time.time()
 
-    # Process in smaller batches to manage memory
-    batch_size = 10000
-    features_list = []
-    
-    for i in range(0, len(urls), batch_size):
-        batch_urls = urls[i:i + batch_size]
-        print(f"  Processing batch {i//batch_size + 1}/{(len(urls) + batch_size - 1)//batch_size} ({len(batch_urls)} URLs)...")
-        
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            batch_features = list(executor.map(extract_features, batch_urls))
-            features_list.extend(batch_features)
-        
-        # Clear some memory
-        del batch_urls, batch_features
+    # Simple feature extraction without batch processing
+    features_list = [extract_features(url) for url in urls]
 
     print(f"Feature extraction done in {time.time() - t0:.1f}s")
 

@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 import joblib
 import pandas as pd
 import os
-from feature_extraction import extract_features, extract_features_batch, is_valid_url, is_trusted_domain, FEATURE_COLUMNS
+from feature_extraction import extract_features, is_valid_url, is_trusted_domain, FEATURE_COLUMNS
 
 st.set_page_config(page_title="PhishWall", page_icon="🛡️", layout="centered")
 
@@ -15,7 +15,6 @@ st.set_page_config(page_title="PhishWall", page_icon="🛡️", layout="centered
 # ---------------------------------------------------------------------------
 ICON_SHIELD_LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2.5l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10v-6l8-3z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10.3 11V9.3a1.7 1.7 0 0 1 3.4 0V11"/></svg>'
 ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg>'
-ICON_LIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>'
 ICON_LINK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 15l6-6M10 6l1-1a4 4 0 0 1 6 6l-1 1M14 18l-1 1a4 4 0 0 1-6-6l1-1"/></svg>'
 ICON_SHIELD_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2.5l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10v-6l8-3z"/><path d="M9 12.2l2 2 4-4.4"/></svg>'
 ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.8-4.8"/></svg>'
@@ -398,88 +397,85 @@ if model is None:
     st.error("Model not found. Run `train_model.py` first, then restart.")
     st.stop()
 
-tab_single, tab_batch = st.tabs(["🔎  Single URL", "📋  Batch Scan"])
-
 # ---------------------------------------------------------------------------
-# SINGLE URL
+# SINGLE URL ANALYSIS (batch processing removed)
 # ---------------------------------------------------------------------------
-with tab_single:
-    st.markdown(f'''
-    <div class="pw-card">
-        <div class="pw-card-head">
-            <div class="pw-icon-box">{ICON_GLOBE}</div>
-            <span>Enter URL to Analyze</span>
+st.markdown(f'''
+<div class="pw-card">
+    <div class="pw-card-head">
+        <div class="pw-icon-box">{ICON_GLOBE}</div>
+        <span>Enter URL to Analyze</span>
+    </div>
+    <div class="pw-field-wrap">
+''', unsafe_allow_html=True)
+
+url_input = st.text_input("URL to check", placeholder="https://example.com",
+                           label_visibility="collapsed")
+
+st.markdown(f'''
+    </div>
+    <div class="pw-helper">{ICON_SHIELD_CHECK}<span>We analyze the URL and predict if it's safe or a phishing attempt.</span></div>
+''', unsafe_allow_html=True)
+
+analyze = st.button("🔍  Analyze URL  →", use_container_width=True)
+
+st.markdown('</div>', unsafe_allow_html=True)  # close pw-card
+
+if analyze:
+    url = normalize_url(url_input)
+    if not url:
+        st.warning("Please enter a URL.")
+        st.stop()
+
+    valid, reason = is_valid_url(url)
+    if not valid:
+        st.warning(f"⚠️ That doesn't look like a valid URL. {reason}")
+        st.stop()
+
+    domain = urlparse(url).netloc
+    if is_trusted_domain(domain):
+        st.markdown(f'''
+        <div class="pw-card pw-state-card safe">
+            <div class="pw-result-icon safe">{ICON_BADGE_CHECK}</div>
+            <div class="pw-state-text">
+                <h3>✅ VERIFIED OFFICIAL DOMAIN</h3>
+                <p>This domain is registration-restricted to verified Indian government/banking
+                entities (or is on our verified allowlist), so we can confirm it's legitimate
+                directly — no model guessing needed. This only verifies the domain itself, not
+                whether the site's content or links are safe.</p>
+            </div>
         </div>
-        <div class="pw-field-wrap">
-    ''', unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
+        st.stop()
 
-    url_input = st.text_input("URL to check", placeholder="https://example.com",
-                               label_visibility="collapsed")
+    with st.spinner("scanning..."):
+        features = extract_features(url)
+        df = pd.DataFrame([features])[FEATURE_COLUMNS]
+        ml_score = model.predict_proba(df)[0][1]
+        rules = rule_score(features)
+        final = max(ml_score, rules)
+        is_phishing = final >= THRESHOLD
 
-    st.markdown(f'''
+    if is_phishing:
+        st.markdown(f'''
+        <div class="pw-card pw-state-card danger">
+            <div class="pw-result-icon danger">{ICON_WARNING}</div>
+            <div class="pw-state-text">
+                <h3>🚨 PHISHING DETECTED — {final*100:.0f}% RISK</h3>
+                <p>Do not visit this site. It may steal your credentials or data.</p>
+            </div>
         </div>
-        <div class="pw-helper">{ICON_SHIELD_CHECK}<span>We analyze the URL and predict if it's safe or a phishing attempt.</span></div>
-    ''', unsafe_allow_html=True)
-
-    analyze = st.button("🔍  Analyze URL  →", use_container_width=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)  # close pw-card
-
-    if analyze:
-        url = normalize_url(url_input)
-        if not url:
-            st.warning("Please enter a URL.")
-            st.stop()
-
-        valid, reason = is_valid_url(url)
-        if not valid:
-            st.warning(f"⚠️ That doesn't look like a valid URL. {reason}")
-            st.stop()
-
-        domain = urlparse(url).netloc
-        if is_trusted_domain(domain):
-            st.markdown(f'''
-            <div class="pw-card pw-state-card safe">
-                <div class="pw-result-icon safe">{ICON_BADGE_CHECK}</div>
-                <div class="pw-state-text">
-                    <h3>✅ VERIFIED OFFICIAL DOMAIN</h3>
-                    <p>This domain is registration-restricted to verified Indian government/banking
-                    entities (or is on our verified allowlist), so we can confirm it's legitimate
-                    directly — no model guessing needed. This only verifies the domain itself, not
-                    whether the site's content or links are safe.</p>
-                </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+        <div class="pw-card pw-state-card safe">
+            <div class="pw-result-icon safe">{ICON_SHIELD_CHECK}</div>
+            <div class="pw-state-text">
+                <h3>✅ LOOKS SAFE — {(1-final)*100:.0f}% CONFIDENCE</h3>
+                <p>This URL appears legitimate. Still, stay cautious online.</p>
             </div>
-            ''', unsafe_allow_html=True)
-            st.stop()
-
-        with st.spinner("scanning..."):
-            features = extract_features(url)
-            df = pd.DataFrame([features])[FEATURE_COLUMNS]
-            ml_score = model.predict_proba(df)[0][1]
-            rules = rule_score(features)
-            final = max(ml_score, rules)
-            is_phishing = final >= THRESHOLD
-
-        if is_phishing:
-            st.markdown(f'''
-            <div class="pw-card pw-state-card danger">
-                <div class="pw-result-icon danger">{ICON_WARNING}</div>
-                <div class="pw-state-text">
-                    <h3>🚨 PHISHING DETECTED — {final*100:.0f}% RISK</h3>
-                    <p>Do not visit this site. It may steal your credentials or data.</p>
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-        else:
-            st.markdown(f'''
-            <div class="pw-card pw-state-card safe">
-                <div class="pw-result-icon safe">{ICON_SHIELD_CHECK}</div>
-                <div class="pw-state-text">
-                    <h3>✅ LOOKS SAFE — {(1-final)*100:.0f}% CONFIDENCE</h3>
-                    <p>This URL appears legitimate. Still, stay cautious online.</p>
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
+        </div>
+        ''', unsafe_allow_html=True)
 
         st.markdown("**Phishing Risk**")
         st.progress(float(final))
@@ -514,17 +510,18 @@ with tab_single:
                      "": "⚠️" if k in suspicious and suspicious[k](features[k]) else ""}
                     for k, label in labels.items()]
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-    else:
-        st.markdown(f'''
-        <div class="pw-card pw-state-card">
-            <div class="pw-radar"></div>
-            <div class="pw-state-text">
-                <h3 style="color:var(--neon-strong)">AWAITING ANALYSIS</h3>
-                <p>Enter a URL above and click Analyze to see if it's safe or a phishing threat.</p>
-            </div>
-            <div class="pw-state-deco">{ICON_FINGERPRINT}</div>
+
+else:
+    st.markdown(f'''
+    <div class="pw-card pw-state-card">
+        <div class="pw-radar"></div>
+        <div class="pw-state-text">
+            <h3 style="color:var(--neon-strong)">AWAITING ANALYSIS</h3>
+            <p>Enter a URL above and click Analyze to see if it's safe or a phishing threat.</p>
         </div>
-        ''', unsafe_allow_html=True)
+        <div class="pw-state-deco">{ICON_FINGERPRINT}</div>
+    </div>
+    ''', unsafe_allow_html=True)
 
     st.markdown(f'''
     <div class="pw-badges">
@@ -538,82 +535,4 @@ with tab_single:
             <div><div class="pw-badge-title">Secure</div><div class="pw-badge-sub">Your Safety, Our Priority</div></div></div>
     </div>
     ''', unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# BATCH SCAN — the actual "parallel prediction" path
-# ---------------------------------------------------------------------------
-with tab_batch:
-    st.markdown(f'''
-    <div class="pw-card">
-        <div class="pw-card-head">
-            <div class="pw-icon-box">{ICON_LIST}</div>
-            <span>Batch Scan — Multiple URLs</span>
-        </div>
-        <div class="pw-helper">{ICON_SHIELD_CHECK}<span>Paste one URL per line, or upload a .csv/.txt file with a `url` column or one URL per line.</span></div>
-    ''', unsafe_allow_html=True)
-
-    batch_text = st.text_area("URLs", height=160, placeholder="login-paypal-secure.com\nexample.com\n192.168.1.5/login",
-                               label_visibility="collapsed")
-    uploaded = st.file_uploader("or upload a file", type=["csv", "txt"], label_visibility="collapsed")
-
-    run_batch = st.button("🔍  Scan All  →", use_container_width=True, key="batch_btn")
-
-    st.markdown('</div>', unsafe_allow_html=True)  # close pw-card
-
-    if run_batch:
-        urls = []
-        if batch_text.strip():
-            urls.extend(batch_text.strip().splitlines())
-        if uploaded is not None:
-            if uploaded.name.endswith(".csv"):
-                up_df = pd.read_csv(uploaded)
-                col = "url" if "url" in up_df.columns else up_df.columns[0]
-                urls.extend(up_df[col].astype(str).tolist())
-            else:
-                urls.extend(uploaded.read().decode("utf-8").splitlines())
-
-        urls = [normalize_url(u) for u in urls if u.strip()]
-
-        if not urls:
-            st.warning("Add at least one URL.")
-            st.stop()
-
-        valid_urls, invalid_rows = [], []
-        for u in urls:
-            ok, reason = is_valid_url(u)
-            if ok:
-                valid_urls.append(u)
-            else:
-                invalid_rows.append({"url": u, "reason": reason})
-
-        if invalid_rows:
-            st.warning(f"⚠️ Skipped {len(invalid_rows)} entr{'y' if len(invalid_rows)==1 else 'ies'} "
-                       f"that aren't valid URLs (not scored):")
-            st.dataframe(pd.DataFrame(invalid_rows), hide_index=True, use_container_width=True)
-
-        if not valid_urls:
-            st.info("No valid URLs left to score.")
-            st.stop()
-
-        with st.spinner(f"extracting features for {len(valid_urls)} urls and scoring in one batch..."):
-            feat_df = extract_features_batch(valid_urls)
-            result_df = score_dataframe(feat_df, model)
-
-        n_phish = int(result_df['is_phishing'].sum())
-        c1, c2 = st.columns(2)
-        c1.metric("URLs scanned", len(result_df))
-        c2.metric("Flagged as phishing", n_phish)
-
-        display_df = result_df[['url', 'trusted_domain', 'ml_score', 'rule_score', 'final_risk', 'is_phishing']].copy()
-        display_df['ml_score'] = (display_df['ml_score'] * 100).round(1)
-        display_df['rule_score'] = (display_df['rule_score'] * 100).round(1)
-        display_df['final_risk'] = (display_df['final_risk'] * 100).round(1)
-        display_df = display_df.sort_values('final_risk', ascending=False)
-
-        st.dataframe(display_df, hide_index=True, use_container_width=True)
-
-        csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇  Download Results CSV", data=csv_bytes,
-                           file_name="phishwall_results.csv", mime="text/csv",
-                           use_container_width=True)
 

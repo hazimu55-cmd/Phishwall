@@ -2,7 +2,6 @@ import re
 import math
 from collections import Counter
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
 ACTION_KEYWORDS = [
@@ -459,33 +458,3 @@ def extract_features(url: str) -> dict:
     features['special_char_ratio'] = char_ratios['special_char_ratio']
 
     return features
-
-
-def extract_features_batch(urls: list[str], max_workers: int = 8) -> pd.DataFrame:
-    """
-    Extract features for many URLs at once, returning a single DataFrame
-    ready to hand to model.predict_proba() in ONE call.
-
-    Why this fixes "not predicting in parallel":
-    - The old app only ever built a 1-row DataFrame and called predict_proba
-      once per URL, one click at a time. There was no batch path.
-    - Feature extraction itself is cheap, pure-Python string/regex work, so it
-      is CPU-bound and threads won't truly parallelize it (GIL). We still use
-      a small ThreadPoolExecutor so this is a natural place to swap in real
-      I/O-bound checks later (DNS lookups, WHOIS, blocklist API calls, etc.)
-      without changing the calling code.
-    - The actual speedup for prediction comes from calling
-      model.predict_proba(df) ONCE on the whole batch, since scikit-learn
-      vectorizes across rows internally (numpy under the hood). That is the
-      "parallel" prediction you want, not a Python-level for-loop.
-    """
-    urls = [u.strip() for u in urls if u.strip()]
-    if not urls:
-        return pd.DataFrame(columns=FEATURE_COLUMNS)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        rows = list(executor.map(extract_features, urls))
-
-    df = pd.DataFrame(rows, columns=FEATURE_COLUMNS)
-    df.insert(0, 'url', urls)
-    return df
