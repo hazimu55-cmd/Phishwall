@@ -1,8 +1,8 @@
 # 🛡️ PhishWall – Intelligent Phishing URL Detection System
 
 PhishWall is a **machine learning-based cybersecurity application** that detects malicious URLs in real time. It analyzes the structure and intent behind a URL to determine whether it is **legitimate or phishing**, helping users avoid potential scams and credential theft.
-🔗 **[Live Demo](https://phishwall-m7m.streamlit.app/)**
 
+🔗 **Live Demo:** [Try PhishWall](https://phishwall-m7m.streamlit.app/)
 ---
 
 ## 🧠 How It Works
